@@ -1,0 +1,48 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: ap-southeast-2
+    ECR_REPOSITORY: ecr-test
+    CONTAINER_NAME: my-dotnet-api
+    EC2_NAME_TAG: ec2-api-testing-1
+    APP_PORT: "80"
+    CONTAINER_PORT: "8080"
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - ECR_REGISTRY=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - IMAGE_TAG=$CODEBUILD_RESOLVED_SOURCE_VERSION
+      - IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      - LATEST_IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:latest
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+  build:
+    commands:
+      - echo Building Docker image...
+      - docker build -t $IMAGE_URI -t $LATEST_IMAGE_URI .
+
+  post_build:
+    commands:
+      - echo Pushing Docker image to ECR...
+      - docker push $IMAGE_URI
+      - docker push $LATEST_IMAGE_URI
+
+      - echo Deploying to EC2 using SSM Run Command...
+      - |
+        aws ssm send-command \
+          --region $AWS_DEFAULT_REGION \
+          --document-name "AWS-RunShellScript" \
+          --targets "Key=tag:Name,Values=$EC2_NAME_TAG" \
+          --comment "Deploy $ECR_REPOSITORY image $IMAGE_TAG" \
+          --parameters commands="[
+            \"aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY\",
+            \"docker pull $IMAGE_URI\",
+            \"docker stop $CONTAINER_NAME || true\",
+            \"docker rm $CONTAINER_NAME || true\",
+            \"docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $APP_PORT:$CONTAINER_PORT $IMAGE_URI\",
+            \"docker image prune -f\"
+          ]"

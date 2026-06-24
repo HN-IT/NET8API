@@ -40,5 +40,16 @@ namespace API.Controllers
             })
             .ToArray();
         }
+
+        [HttpGet]
+        [ActionName("Version3")]
+        public IEnumerable<WeatherForecast> Version3()
+        {
+            return Enumerable.Range(1, 5).Select(index => new WeatherForecast
+            {
+                Summary = Summaries[Random.Shared.Next(Summaries.Length)] + " - Version 3"
+            })
+            .ToArray();
+        }
     }
 }
